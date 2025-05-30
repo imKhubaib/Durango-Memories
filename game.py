@@ -4,11 +4,15 @@ import pygame
 import sys
 import random
 import json
-import os # New: For file operations like renaming and listing files
+import os 
 from enum import Enum
 from config import * # Import all constants
+from player import Player
+from button import Button 
+from level.map import Map # Import Map from the level package
+from level.tile import Tile # Corrected: Added this import
 
-# --- New: InputBox Class ---
+# --- InputBox Class ---
 class InputBox:
     def __init__(self, x, y, width, height, text='', font=None):
         self.rect = pygame.Rect(x, y, width, height)
@@ -18,48 +22,38 @@ class InputBox:
         self.text_color = INPUT_BOX_TEXT_COLOR
         self.text = text
         self.font = font if font else pygame.font.Font(None, INPUT_BOX_FONT_SIZE)
-        self.active = False # Is this input box currently selected for typing?
+        self.active = False 
         self.txt_surface = self.font.render(text, True, self.text_color)
-        self.placeholder_text = "Enter filename..." # Default placeholder
+        self.placeholder_text = "Enter filename..." 
 
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
-            # If the user clicked on the input_box rect.
             if self.rect.collidepoint(event.pos):
-                # Toggle the active state.
                 self.active = not self.active
             else:
                 self.active = False
-            # Change the current color of the input box.
-            self.color = self.color_active if self.active else self.color_inactive
         if event.type == pygame.KEYDOWN:
             if self.active:
                 if event.key == pygame.K_RETURN:
-                    # When Enter is pressed, return the text
-                    # This won't be handled directly by the InputBox, but by the game loop
                     pass 
                 elif event.key == pygame.K_BACKSPACE:
                     self.text = self.text[:-1]
                 else:
                     self.text += event.unicode
-                # Re-render the text.
                 self.txt_surface = self.font.render(self.text, True, self.text_color)
 
     def draw(self, surface):
-        # Blit the text.
-        surface.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + 5))
-        # Blit the rect.
-        pygame.draw.rect(surface, self.outline_color, self.rect, 2) # Draw outline
         current_fill_color = self.color_active if self.active else self.color_inactive
         pygame.draw.rect(surface, current_fill_color, self.rect)
-        # Re-blit text after drawing fill to ensure it's on top
-        surface.blit(self.txt_surface, (self.rect.x + 5, self.rect.y + 5))
+        pygame.draw.rect(surface, self.outline_color, self.rect, 2) 
 
-        # Placeholder text
-        if not self.text and not self.active:
-            placeholder_surface = self.font.render(self.placeholder_text, True, (150,150,150)) # Lighter grey
+        if self.text:
+            text_surface = self.font.render(self.text, True, self.text_color)
+            surface.blit(text_surface, (self.rect.x + 5, self.rect.y + 5))
+        else:
+            placeholder_surface = self.font.render(self.placeholder_text, True, (150,150,150))
             surface.blit(placeholder_surface, (self.rect.x + 5, self.rect.y + 5))
-
+            
     def get_text(self):
         return self.text
 
@@ -67,27 +61,27 @@ class InputBox:
         self.text = text
         self.txt_surface = self.font.render(self.text, True, self.text_color)
 
-# --- End InputBox Class ---
 
-
-# Define Game States (Updated)
+# Define Game States 
 class GameState(Enum):
     START_SCREEN = 1
     PLAYING = 2
     PAUSE_MENU = 3
     SLOT_SELECTION = 4
-    INPUT_TEXT_PROMPT = 5 # New state for getting text input from user
+    INPUT_TEXT_PROMPT = 5
 
 class Game:
     def __init__(self):
         """Initializes the game, sets up the screen, and loads assets."""
         pygame.init()
+        # Initial screen setup (will be updated by _set_screen_mode)
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Durango Wildlands Clone")
         self.clock = pygame.time.Clock()
         self.running = True
 
         self.game_state = GameState.START_SCREEN
+        self.fullscreen = False # New: Track fullscreen state
 
         # Game components (initialized to None, will be set when playing or loading)
         self.map = None
@@ -102,9 +96,9 @@ class Game:
         self.title_font = pygame.font.Font(None, TITLE_FONT_SIZE)
         self.button_font = pygame.font.Font(None, BUTTON_FONT_SIZE)
         self.small_font = pygame.font.Font(None, SMALL_FONT_SIZE)
-        self.input_font = pygame.font.Font(None, INPUT_BOX_FONT_SIZE) # New font for input box
+        self.input_font = pygame.font.Font(None, INPUT_BOX_FONT_SIZE) 
 
-        # --- Buttons for Start Screen (unchanged) ---
+        # --- Buttons for Start Screen ---
         self.start_button = Button(
             (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
             SCREEN_HEIGHT // 2 - BUTTON_HEIGHT - BUTTON_SPACING,
@@ -114,7 +108,7 @@ class Game:
             (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
             SCREEN_HEIGHT // 2,
             BUTTON_WIDTH, BUTTON_HEIGHT, "Load Game", 
-            action=lambda: self._enter_slot_selection(mode='load')
+            action=lambda: self._enter_slot_selection(mode='load') 
         )
         self.exit_button = Button(
             (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
@@ -123,7 +117,7 @@ class Game:
         )
         self.start_screen_buttons = [self.start_button, self.load_button, self.exit_button]
 
-        # --- Buttons for Pause Menu (slightly changed for save action) ---
+        # --- Buttons for Pause Menu ---
         self.resume_button = Button(
             (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
             SCREEN_HEIGHT // 2 - (BUTTON_HEIGHT + BUTTON_SPACING) * 1.5,
@@ -133,7 +127,7 @@ class Game:
             (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
             SCREEN_HEIGHT // 2 - (BUTTON_HEIGHT + BUTTON_SPACING) * 0.5,
             BUTTON_WIDTH, BUTTON_HEIGHT, "Save Game", 
-            action=lambda: self._prompt_save_filename() # New action to prompt filename
+            action=lambda: self._prompt_save_filename() 
         )
         self.load_game_button_pause = Button(
             (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
@@ -157,63 +151,75 @@ class Game:
         self.slot_selection_mode = 'load' 
 
         # --- Input Box for file naming / renaming ---
-        self.input_box_active = False # Controls if the input box is currently active
         self.current_input_box = None
         self.input_callback = None # Function to call when input is finished
         self.input_prompt_text = "" # Text displayed above the input box
+
+    def _set_screen_mode(self):
+        """Toggles between windowed and fullscreen modes."""
+        if self.fullscreen:
+            # Use pygame.FULLSCREEN flag
+            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN) 
+            # When going fullscreen, you often want to use the current display's resolution
+            # The (0,0) tells Pygame to use the current display's best resolution.
+            # You might want to update SCREEN_WIDTH and SCREEN_HEIGHT in config
+            # or use display.Info() to get actual resolution if scaling UI elements.
+        else:
+            self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Durango Wildlands Clone")
 
 
     def _create_slot_selection_buttons(self, mode):
         """Helper to create buttons for each save/load slot based on the mode."""
         self.slot_selection_buttons = []
         self.slot_selection_mode = mode
+        
+        # Adjusting layout for current screen size
+        current_screen_width, current_screen_height = self.screen.get_size()
+        
+        total_rows_height = (self.num_save_slots + 1) * (BUTTON_HEIGHT + BUTTON_SPACING) - BUTTON_SPACING
+        start_y = (current_screen_height - total_rows_height) // 2
 
-        total_buttons_height = (self.num_save_slots + 1) * (BUTTON_HEIGHT + BUTTON_SPACING) - BUTTON_SPACING
-        start_y = (SCREEN_HEIGHT - total_buttons_height) // 2
-
-        # Get existing save files to display their actual names
         existing_saves = self._get_existing_save_files()
 
-        for i in range(self.num_save_slots): # Loop from 0 to 9 for save file index
-            slot_number = i + 1 # User-facing slot number 1-10
+        for i in range(self.num_save_slots): 
+            slot_number = i + 1 
             
-            # Determine button text: either "Empty Slot X" or actual filename
-            current_filename = existing_saves.get(f'slot_{slot_number}', f"Empty Slot {slot_number}")
-            button_text = f"Slot {slot_number}: {current_filename}" # Show actual filename
+            current_filename_display = existing_saves.get(f'slot_{slot_number}', f"Empty Slot {slot_number}")
+            button_text = f"Slot {slot_number}: {current_filename_display}" 
 
             button_y = start_y + i * (BUTTON_HEIGHT + BUTTON_SPACING)
             
             action_func = None
             if mode == 'save':
-                # When in save mode, clicking a slot saves to that slot (overwriting if exists)
                 action_func = lambda slot_num=slot_number: self._prompt_save_filename_for_slot(slot_num)
             elif mode == 'load':
-                # When in load mode, clicking a slot loads that slot
                 action_func = lambda slot_num=slot_number: self._load_game_from_slot(slot_num)
 
-            button = Button(
-                (SCREEN_WIDTH - BUTTON_WIDTH * 1.5) // 2, # Make buttons a bit wider to fit filename
+            slot_button_width = int(BUTTON_WIDTH * 1.5) 
+            
+            slot_button = Button(
+                (current_screen_width - slot_button_width) // 2, # Center horizontally
                 button_y,
-                int(BUTTON_WIDTH * 1.5), BUTTON_HEIGHT, button_text, # Adjust width
+                slot_button_width, BUTTON_HEIGHT, button_text, 
                 action=action_func
             )
-            self.slot_selection_buttons.append(button)
+            self.slot_selection_buttons.append(slot_button)
 
-            # Add a Rename button next to each slot (if it's not empty)
-            if existing_saves.get(f'slot_{slot_number}') != f"Empty Slot {slot_number}":
+            if not current_filename_display.startswith("Empty Slot") and not current_filename_display.startswith("Corrupted Slot"):
+                 rename_button_width = BUTTON_WIDTH // 2
                  rename_button = Button(
-                    button.rect.right + BUTTON_SPACING, # Position to the right of the slot button
+                    slot_button.rect.right + BUTTON_SPACING, 
                     button_y,
-                    BUTTON_WIDTH // 2, BUTTON_HEIGHT, "Rename",
-                    action=lambda slot_num=slot_number, old_name=current_filename: self._prompt_rename_filename(slot_num, old_name)
+                    rename_button_width, BUTTON_HEIGHT, "Rename",
+                    action=lambda slot_num=slot_number, old_name=current_filename_display: self._prompt_rename_filename(slot_num, old_name)
                 )
                  self.slot_selection_buttons.append(rename_button)
 
-        # Add Back button
         back_button_y = start_y + self.num_save_slots * (BUTTON_HEIGHT + BUTTON_SPACING)
         self.slot_selection_buttons.append(
             Button(
-                (SCREEN_WIDTH - BUTTON_WIDTH) // 2,
+                (current_screen_width - BUTTON_WIDTH) // 2, # Center horizontally
                 back_button_y,
                 BUTTON_WIDTH, BUTTON_HEIGHT, "Back", 
                 action=self._return_from_slot_selection
@@ -224,35 +230,35 @@ class Game:
         """Returns a dictionary of existing save files mapped to their slot numbers."""
         saves = {}
         for i in range(1, self.num_save_slots + 1):
-            filename_path = f'save_slot_{i}.json' # This is the internal fixed filename for the slot
+            filename_path = f'save_slot_{i}.json' 
             if os.path.exists(filename_path):
                 try:
                     with open(filename_path, 'r') as f:
                         data = json.load(f)
-                        # The actual user-given name is stored inside the save file
                         saves[f'slot_{i}'] = data.get('save_name', f"Unnamed Save {i}")
                 except (json.JSONDecodeError, KeyError):
                     saves[f'slot_{i}'] = f"Corrupted Slot {i}"
             else:
-                saves[f'slot_{i}'] = f"Empty Slot {i}" # Indicates no file for this slot
+                saves[f'slot_{i}'] = f"Empty Slot {i}" 
         return saves
 
     def _initialize_game_components(self):
         """Initializes map and player for a new game."""
-        self.map = Map()
+        self.map = Map() 
 
         valid_spawn_tiles = []
-        for row in range(self.map.rows):
-            for col in range(self.map.cols):
-                tile_type = self.map.data[row][col]
-                if tile_type == 1 or tile_type == 2: # Grass or Dirt
-                    valid_spawn_tiles.append((col * TILE_SIZE, row * TILE_SIZE))
+        for r_idx in range(self.map.rows):
+            for c_idx in range(self.map.cols):
+                tile = self.map.data[r_idx][c_idx] 
+                # Player can only spawn on non-collidable tiles (grass or dirt for now)
+                if not tile.is_collidable:
+                    valid_spawn_tiles.append((tile.rect.x, tile.rect.y))
 
         spawn_x, spawn_y = PLAYER_START_X, PLAYER_START_Y
         if valid_spawn_tiles:
             spawn_x, spawn_y = random.choice(valid_spawn_tiles)
         else:
-            print("Warning: No valid spawn tiles (Grass or Dirt) found on the map. Spawning at default location.")
+            print("Warning: No valid spawn tiles found on the map. Spawning at default location.")
 
         self.player = Player(spawn_x, spawn_y)
 
@@ -269,7 +275,7 @@ class Game:
     def _enter_slot_selection(self, mode):
         self._previous_game_state = self.game_state 
         self.game_state = GameState.SLOT_SELECTION
-        self._create_slot_selection_buttons(mode) # Generate buttons based on mode
+        self._create_slot_selection_buttons(mode) 
         print(f"Entering Slot Selection for {mode.upper()}...")
 
     def _return_from_slot_selection(self):
@@ -286,74 +292,65 @@ class Game:
         self.running = False
         print("Exiting Game...")
 
-    # --- New Save/Load/Rename Logic ---
+    # --- Save/Load/Rename Logic ---
     def _prompt_save_filename(self):
-        """Initiates the input prompt for a new save filename."""
         self._previous_game_state = self.game_state
         self.game_state = GameState.INPUT_TEXT_PROMPT
         self.input_prompt_text = "Enter save filename:"
         self.current_input_box = InputBox(
-            (SCREEN_WIDTH - INPUT_BOX_WIDTH) // 2,
-            SCREEN_HEIGHT // 2,
+            (self.screen.get_width() - INPUT_BOX_WIDTH) // 2, # Use current screen width
+            self.screen.get_height() // 2,                     # Use current screen height
             INPUT_BOX_WIDTH, INPUT_BOX_HEIGHT,
-            text='MySaveGame', font=self.input_font # Default text
+            text='MySaveGame', font=self.input_font 
         )
         self.current_input_box.active = True
-        self.input_callback = self._finalize_save_with_filename # Set callback for when input is done
+        self.input_callback = self._finalize_save_with_filename 
         print("Prompting for save filename...")
 
     def _prompt_save_filename_for_slot(self, slot_number):
-        """Initiates the input prompt for a filename when saving to a specific slot."""
-        self._previous_game_state = self.game_state # This will be SLOT_SELECTION
+        self._previous_game_state = self.game_state 
         self.game_state = GameState.INPUT_TEXT_PROMPT
         self.input_prompt_text = f"Enter filename for Slot {slot_number}:"
         
-        # Get existing name if available
         existing_saves = self._get_existing_save_files()
         current_name = existing_saves.get(f'slot_{slot_number}', 'NewSave')
         if current_name.startswith("Empty Slot") or current_name.startswith("Corrupted Slot"):
-            current_name = "NewSave" # Default for empty/corrupted slots
+            current_name = "NewSave" 
 
         self.current_input_box = InputBox(
-            (SCREEN_WIDTH - INPUT_BOX_WIDTH) // 2,
-            SCREEN_HEIGHT // 2,
+            (self.screen.get_width() - INPUT_BOX_WIDTH) // 2, 
+            self.screen.get_height() // 2,                    
             INPUT_BOX_WIDTH, INPUT_BOX_HEIGHT,
             text=current_name, font=self.input_font
         )
         self.current_input_box.active = True
-        # Set callback with the specific slot number
         self.input_callback = lambda filename: self._finalize_save_with_filename_and_slot(filename, slot_number)
         print(f"Prompting for filename for slot {slot_number}...")
 
     def _prompt_rename_filename(self, slot_number, old_display_name):
-        """Initiates the input prompt to rename a save file."""
-        self._previous_game_state = self.game_state # This will be SLOT_SELECTION
+        self._previous_game_state = self.game_state 
         self.game_state = GameState.INPUT_TEXT_PROMPT
         self.input_prompt_text = f"Rename Slot {slot_number}: Enter new name"
         
-        # Extract just the name, not "Slot X: " prefix
         initial_name = old_display_name.split(': ')[-1] if ': ' in old_display_name else old_display_name
 
         self.current_input_box = InputBox(
-            (SCREEN_WIDTH - INPUT_BOX_WIDTH) // 2,
-            SCREEN_HEIGHT // 2,
+            (self.screen.get_width() - INPUT_BOX_WIDTH) // 2, 
+            self.screen.get_height() // 2,                    
             INPUT_BOX_WIDTH, INPUT_BOX_HEIGHT,
             text=initial_name, font=self.input_font
         )
         self.current_input_box.active = True
-        # Set callback for renaming specific slot
         self.input_callback = lambda new_name: self._finalize_rename_filename(slot_number, new_name)
         print(f"Prompting to rename slot {slot_number}...")
 
 
     def _finalize_save_with_filename(self, filename):
-        """Callback to save the game using the user-provided filename."""
-        if not filename.strip(): # Check if filename is empty or just spaces
+        if not filename.strip(): 
             print("Save cancelled: filename cannot be empty.")
-            self.game_state = self._previous_game_state # Return to previous state
+            self.game_state = self._previous_game_state 
             return
 
-        # Find the first empty slot to save to
         target_slot = -1
         for i in range(1, self.num_save_slots + 1):
             filename_path = f'save_slot_{i}.json'
@@ -365,11 +362,9 @@ class Game:
             self._save_game_to_slot(target_slot, filename)
         else:
             print("All save slots are full! Cannot save new game without overwriting.")
-            # Optionally, prompt to overwrite or go to slot selection
-            self.game_state = self._previous_game_state # Return to previous state
+            self.game_state = self._previous_game_state 
 
     def _finalize_save_with_filename_and_slot(self, filename, slot_number):
-        """Callback to save game to a specific slot with user-provided filename."""
         if not filename.strip():
             print("Save cancelled: filename cannot be empty.")
             self.game_state = self._previous_game_state
@@ -378,7 +373,6 @@ class Game:
 
 
     def _finalize_rename_filename(self, slot_number, new_name):
-        """Callback to rename a save file."""
         if not new_name.strip():
             print("Rename cancelled: new filename cannot be empty.")
             self.game_state = self._previous_game_state
@@ -389,13 +383,13 @@ class Game:
             try:
                 with open(filename_path, 'r') as f:
                     save_data = json.load(f)
-                save_data['save_name'] = new_name # Update the name inside the JSON
+                save_data['save_name'] = new_name 
                 with open(filename_path, 'w') as f:
                     json.dump(save_data, f, indent=4)
                 print(f"Renamed slot {slot_number} to '{new_name}'")
-                # Refresh slot selection buttons to show new name
+                # Re-create slot buttons to update names on the UI
                 self._create_slot_selection_buttons(self.slot_selection_mode)
-                self.game_state = self._previous_game_state # Go back to slot selection
+                self.game_state = self._previous_game_state 
             except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
                 print(f"Error renaming file for slot {slot_number}: {e}")
                 self.game_state = self._previous_game_state
@@ -405,39 +399,55 @@ class Game:
 
 
     def _save_game_to_slot(self, slot_number, filename_to_save_as):
-        """Performs the actual saving of the game data to a specific slot."""
         if self.player is None or self.map is None:
             print("No game in progress to save!")
-            self.game_state = self._previous_game_state # Return
+            self.game_state = self._previous_game_state 
             return
+
+        # When saving, only save the tile IDs, not the entire Tile objects
+        map_id_data = [[tile.id for tile in row] for row in self.map.data]
 
         save_data = {
             'player_x': self.player.rect.x,
             'player_y': self.player.rect.y,
-            'map_data': self.map.data,
-            'save_name': filename_to_save_as # Store the user-given name
+            'map_data': map_id_data, 
+            'save_name': filename_to_save_as 
         }
         
-        # All saves will now be named save_slot_X.json internally, and display user name
         filename_path = f'save_slot_{slot_number}.json' 
         try:
             with open(filename_path, 'w') as f:
                 json.dump(save_data, f, indent=4)
             print(f"Game saved successfully as '{filename_to_save_as}' to {filename_path}")
-            self.game_state = self._previous_game_state # Return to previous state (e.g., PAUSE_MENU)
+            self.game_state = self._previous_game_state 
         except Exception as e:
             print(f"Error saving game: {e}")
             self.game_state = self._previous_game_state
 
     def _load_game_from_slot(self, slot_number):
-        """Loads game state from a specific slot."""
         filename_path = f'save_slot_{slot_number}.json'
         try:
             with open(filename_path, 'r') as f:
                 save_data = json.load(f)
             
-            self.map = Map()
-            self.map.data = save_data['map_data'] 
+            # Reconstruct Map with Tile objects from saved IDs
+            self.map = Map() 
+            loaded_map_id_data = save_data['map_data']
+            
+            # Create Tile objects from the loaded IDs
+            reconstructed_map_data = []
+            for r_idx, row_ids in enumerate(loaded_map_id_data):
+                reconstructed_row = []
+                for c_idx, tile_id in enumerate(row_ids):
+                    reconstructed_row.append(Tile(tile_id, c_idx * TILE_SIZE, r_idx * TILE_SIZE))
+                reconstructed_map_data.append(reconstructed_row)
+            
+            self.map.data = reconstructed_map_data 
+            self.map.rows = len(reconstructed_map_data)
+            self.map.cols = len(reconstructed_map_data[0]) if reconstructed_map_data else 0
+            self.map.width = self.map.cols * TILE_SIZE
+            self.map.height = self.map.rows * TILE_SIZE
+
 
             self.player = Player(save_data['player_x'], save_data['player_y'])
             
@@ -450,17 +460,26 @@ class Game:
         except Exception as e:
             print(f"An unexpected error occurred while loading game from slot {slot_number}: {e}")
         finally:
-            self.game_state = GameState.PLAYING # Always return to playing or handle error appropriately
-
-    # --- End New Save/Load/Rename Logic ---
+            if self.game_state == GameState.SLOT_SELECTION: 
+                self.game_state = self._previous_game_state 
 
 
     def handle_events(self):
-        """Handles Pygame events based on current game state."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
             
+            # Global keyboard shortcut for fullscreen
+            if event.type == pygame.KEYDOWN:
+                # Check for Alt + Enter
+                if event.key == pygame.K_RETURN and (pygame.key.get_mods() & pygame.KMOD_ALT):
+                    self.fullscreen = not self.fullscreen
+                    self._set_screen_mode() # Call the new function to update display mode
+                # Check for Ctrl + Enter
+                elif event.key == pygame.K_RETURN and (pygame.key.get_mods() & pygame.KMOD_CTRL):
+                    self.fullscreen = not self.fullscreen
+                    self._set_screen_mode()
+
             if self.game_state == GameState.START_SCREEN:
                 for button in self.start_screen_buttons:
                     button.handle_event(event)
@@ -474,49 +493,52 @@ class Game:
                 if self.current_input_box:
                     self.current_input_box.handle_event(event)
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
-                        # User pressed Enter, trigger the callback
                         if self.input_callback:
                             entered_text = self.current_input_box.get_text()
                             self.input_callback(entered_text)
-                            self.current_input_box = None # Clear the input box
+                            self.current_input_box = None 
                             self.input_callback = None
                         
             elif self.game_state == GameState.PLAYING:
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE: # Press ESC to pause
+                    if event.key == pygame.K_ESCAPE: 
                         self.game_state = GameState.PAUSE_MENU
 
 
     def update(self, dt):
-        """Updates game logic based on current game state."""
         if self.game_state == GameState.PLAYING:
             if self.player and self.map:
                 self.player.update(dt, self.map)
 
-                target_camera_x = self.player.rect.centerx - (SCREEN_WIDTH / self.zoom_level) // 2
-                target_camera_y = self.player.rect.centery - (SCREEN_HEIGHT / self.zoom_level) // 2
+                # Camera centering and clamping
+                # Calculate the desired camera offset based on player's position
+                target_camera_x = self.player.rect.centerx - self.screen.get_width() / (2 * self.zoom_level)
+                target_camera_y = self.player.rect.centery - self.screen.get_height() / (2 * self.zoom_level)
 
-                max_camera_x = self.map.width - (SCREEN_WIDTH / self.zoom_level)
-                max_camera_y = self.map.height - (SCREEN_HEIGHT / self.zoom_level)
+                # Clamp camera to map boundaries
+                max_camera_x = self.map.width - self.screen.get_width() / self.zoom_level
+                max_camera_y = self.map.height - self.screen.get_height() / self.zoom_level
 
                 self.camera_offset_x = max(0, min(target_camera_x, max_camera_x))
                 self.camera_offset_y = max(0, min(target_camera_y, max_camera_y))
 
+
     def draw(self):
-        """Draws game elements to the screen based on current game state."""
         self.screen.fill(DARK_GREY)
 
-        # Draw main game world always IF it exists (so menus overlay it)
+        # Draw playing screen components if game is active or overlaid
         if self.game_state in [GameState.PLAYING, GameState.PAUSE_MENU, GameState.SLOT_SELECTION, GameState.INPUT_TEXT_PROMPT] and self.map and self.player:
             self._draw_playing_screen()
             
-            # Optional: Add a semi-transparent overlay when paused or in selection screen
+            # Apply a semi-transparent overlay when in menus over the game
             if self.game_state in [GameState.PAUSE_MENU, GameState.SLOT_SELECTION, GameState.INPUT_TEXT_PROMPT]:
-                overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((0, 0, 0, 150)) # Black with 150 alpha (transparency)
+                # The overlay should scale to the current screen size
+                overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 150)) # Black with 150 alpha (out of 255)
                 self.screen.blit(overlay, (0,0))
 
 
+        # Draw specific UI for current game state
         if self.game_state == GameState.START_SCREEN:
             self._draw_start_screen()
         elif self.game_state == GameState.PAUSE_MENU:
@@ -529,62 +551,91 @@ class Game:
         pygame.display.flip()
 
     def _draw_start_screen(self):
-        """Draws the elements for the start screen."""
+        # UI elements positioning should adapt to current screen dimensions if going full screen
+        current_screen_width, current_screen_height = self.screen.get_size()
+
         title_text = self.title_font.render("Durango Wildlands Clone", True, TEXT_COLOR)
-        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, self.start_button.rect.top - TITLE_FONT_SIZE // 2 - BUTTON_SPACING))
+        # Position relative to current screen dimensions
+        title_rect = title_text.get_rect(center=(current_screen_width // 2, current_screen_height // 2 - 150)) # Adjusted Y
         self.screen.blit(title_text, title_rect)
+
+        # Update button positions based on current screen dimensions
+        self.start_button.rect.center = (current_screen_width // 2, current_screen_height // 2 - BUTTON_HEIGHT - BUTTON_SPACING)
+        self.load_button.rect.center = (current_screen_width // 2, current_screen_height // 2)
+        self.exit_button.rect.center = (current_screen_width // 2, current_screen_height // 2 + BUTTON_HEIGHT + BUTTON_SPACING)
 
         for button in self.start_screen_buttons:
             button.draw(self.screen)
 
     def _draw_pause_menu(self):
-        """Draws the elements for the pause menu."""
+        current_screen_width, current_screen_height = self.screen.get_size()
+
         title_text = self.title_font.render("Game Paused", True, TEXT_COLOR)
-        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, self.resume_button.rect.top - TITLE_FONT_SIZE // 2 - BUTTON_SPACING))
+        title_rect = title_text.get_rect(center=(current_screen_width // 2, current_screen_height // 2 - 200)) # Adjusted Y
         self.screen.blit(title_text, title_rect)
+
+        # Update button positions based on current screen dimensions
+        self.resume_button.rect.center = (current_screen_width // 2, current_screen_height // 2 - (BUTTON_HEIGHT + BUTTON_SPACING) * 1.5)
+        self.save_game_button.rect.center = (current_screen_width // 2, current_screen_height // 2 - (BUTTON_HEIGHT + BUTTON_SPACING) * 0.5)
+        self.load_game_button_pause.rect.center = (current_screen_width // 2, current_screen_height // 2 + (BUTTON_HEIGHT + BUTTON_SPACING) * 0.5)
+        self.exit_to_main_button.rect.center = (current_screen_width // 2, current_screen_height // 2 + (BUTTON_HEIGHT + BUTTON_SPACING) * 1.5)
+
 
         for button in self.pause_menu_buttons:
             button.draw(self.screen)
 
     def _draw_slot_selection_screen(self):
-        """Draws the elements for the save/load slot selection screen."""
+        current_screen_width, current_screen_height = self.screen.get_size()
+
         if self.slot_selection_mode == 'save':
             title_text = self.title_font.render("Select Save Slot", True, TEXT_COLOR)
-        else: # mode == 'load'
+        else: 
             title_text = self.title_font.render("Select Load Slot", True, TEXT_COLOR)
             
-        # Ensure there's at least one button to get reference from, otherwise center generically
-        if self.slot_selection_buttons:
-            first_button_top = self.slot_selection_buttons[0].rect.top
-        else:
-            first_button_top = SCREEN_HEIGHT // 2 # Fallback if no buttons for some reason
+        # Re-calculate button positions before drawing them
+        self._create_slot_selection_buttons(self.slot_selection_mode) # This will update button rects based on current screen size
 
-        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, first_button_top - TITLE_FONT_SIZE // 2 - BUTTON_SPACING))
+        if self.slot_selection_buttons:
+            # Find the top-most button to position the title relative to it
+            first_button_top = min(b.rect.top for b in self.slot_selection_buttons if "Slot" in b.text)
+        else:
+            first_button_top = current_screen_height // 2 
+
+        title_rect = title_text.get_rect(center=(current_screen_width // 2, first_button_top - TITLE_FONT_SIZE // 2 - BUTTON_SPACING))
         self.screen.blit(title_text, title_rect)
 
         for button in self.slot_selection_buttons:
             button.draw(self.screen)
 
     def _draw_input_prompt(self):
-        """Draws the input box and its prompt."""
-        # Draw the prompt text
+        current_screen_width, current_screen_height = self.screen.get_size()
+
         prompt_surface = self.small_font.render(self.input_prompt_text, True, TEXT_COLOR)
-        prompt_rect = prompt_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 50))
+        prompt_rect = prompt_surface.get_rect(center=(current_screen_width // 2, current_screen_height // 2 - 50))
         self.screen.blit(prompt_surface, prompt_rect)
 
-        # Draw the input box itself
+        # Update input box position based on current screen dimensions
+        self.current_input_box.rect.center = (current_screen_width // 2, current_screen_height // 2 + 20) # Adjusted Y
+
         if self.current_input_box:
             self.current_input_box.draw(self.screen)
 
 
     def _draw_playing_screen(self):
-        """Draws the main game elements."""
         if self.map and self.player:
             self.map.draw(self.screen, self.camera_offset_x, self.camera_offset_y, self.zoom_level)
 
-            scaled_player_width = int(self.player.original_image.get_width() * self.zoom_level)
-            scaled_player_height = int(self.player.original_image.get_height() * self.zoom_level)
-            self.player.image = pygame.transform.scale(self.player.original_image, (scaled_player_width, scaled_player_height))
+            if hasattr(self.player, 'original_image'):
+                # Player size should be relative to TILE_SIZE and zoom, not screen size
+                # The PLAYER_SIZE from config is already for zoom_level 1.0
+                scaled_player_width = int(PLAYER_SIZE * self.zoom_level)
+                scaled_player_height = int(PLAYER_SIZE * self.zoom_level)
+                
+                self.player.image = pygame.transform.scale(self.player.original_image, (scaled_player_width, scaled_player_height))
+            else:
+                print("Warning: Player has no original_image. Drawing a default rectangle.")
+                pygame.draw.rect(self.screen, RED, self.player.rect)
+                return 
 
             player_screen_x = (self.player.rect.x - self.camera_offset_x) * self.zoom_level
             player_screen_y = (self.player.rect.y - self.camera_offset_y) * self.zoom_level
@@ -593,8 +644,9 @@ class Game:
 
             self.screen.blit(self.player.image, player_screen_rect)
 
+
     def run(self):
-        """The main game loop."""
+        self._set_screen_mode() # Set initial screen mode
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
             self.handle_events()

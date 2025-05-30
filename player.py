@@ -1,120 +1,112 @@
 # durango_wildlands_clone/player.py
 
 import pygame
-# Import SPRINT_SPEED_MULTIPLIER from config
-from config import PLAYER_SPEED, TILE_SIZE, SCREEN_WIDTH, SCREEN_HEIGHT, RED, SPRINT_SPEED_MULTIPLIER
+from config import PLAYER_SIZE, PLAYER_COLOR, PLAYER_SPEED, TILE_SIZE
 
 class Player(pygame.sprite.Sprite):
     def __init__(self, x, y):
-        """
-        Initializes the Player sprite.
+        super().__init__()
+        # Store original_image for scaling with zoom
+        self.original_image = pygame.Surface((PLAYER_SIZE, PLAYER_SIZE), pygame.SRCALPHA)
+        pygame.draw.circle(self.original_image, PLAYER_COLOR, (PLAYER_SIZE // 2, PLAYER_SIZE // 2), PLAYER_SIZE // 2)
+        
+        self.image = self.original_image # This will be updated by game.py for scaling
+        self.rect = self.image.get_rect(topleft=(x, y))
 
-        Args:
-            x (int): The initial X coordinate of the player.
-            y (int): The initial Y coordinate of the player.
-        """
-        super().__init__() # Call the parent class (Sprite) constructor
-
-        # Player visual representation
-        # Store the original (unscaled) image.
-        self.original_image = pygame.Surface((TILE_SIZE, TILE_SIZE))
-        self.original_image.fill(RED)
-
-        # 'self.image' is the currently scaled image, which will be updated in game.py's draw loop.
-        self.image = self.original_image
-
-        self.rect = self.image.get_rect(topleft=(x, y)) # Player's world position
-
-        # Player attributes
         self.speed = PLAYER_SPEED
-        self.direction = pygame.math.Vector2() # For movement vector
-        self.is_sprinting = False # Flag to track if player is sprinting
-
-    def get_input(self):
-        """Handles keyboard input for player movement and sprinting."""
-        keys = pygame.key.get_pressed()
-
-        self.direction.x = 0
-        self.direction.y = 0
-
-        # Horizontal movement
-        if keys[pygame.K_a]:
-            self.direction.x = -1
-        elif keys[pygame.K_d]:
-            self.direction.x = 1
-
-        # Vertical movement
-        if keys[pygame.K_w]:
-            self.direction.y = -1
-        elif keys[pygame.K_s]:
-            self.direction.y = 1
-
-        # Check for sprint input (Left Shift key)
-        if keys[pygame.K_LSHIFT]:
-            self.is_sprinting = True
-        else:
-            self.is_sprinting = False
-
-        # Normalize diagonal movement: prevents faster diagonal movement
-        if self.direction.length() > 0:
-            self.direction.normalize_ip() # In-place normalization
+        self.dx = 0 # Change in x
+        self.dy = 0 # Change in y
 
     def update(self, dt, game_map):
-        """
-        Updates the player's position based on input, sprint status, and delta time,
-        with collision detection against map tiles and boundaries.
+        """Updates the player's position and handles input and collision."""
+        self._get_input()
 
-        Args:
-            dt (float): Delta time, the time elapsed since the last frame in seconds.
-            game_map (Map): The game's map object for collision checks.
-        """
-        self.get_input()
-
-        current_speed = self.speed
-        if self.is_sprinting:
-            current_speed *= SPRINT_SPEED_MULTIPLIER
-
-        # Store current position for collision rollback
+        # Store current position before moving
         old_x, old_y = self.rect.x, self.rect.y
 
-        # Calculate potential new positions
-        new_x = self.rect.x + self.direction.x * current_speed * dt
-        new_y = self.rect.y + self.direction.y * current_speed * dt
+        # Apply movement
+        self.rect.x += self.dx * self.speed * dt
+        self.rect.y += self.dy * self.speed * dt
 
-        # Apply X movement with collision check
-        # Only attempt to move if there's horizontal input
-        if self.direction.x != 0:
-            # Check if moving horizontally would result in collision
-            if game_map.can_move_to(new_x, self.rect.y):
-                self.rect.x = new_x
-            else:
-                # If collision, try to align to the edge of the passable tile
-                # This gives a basic "slide" along walls.
-                if self.direction.x > 0: # Moving right
-                    # Align to the left edge of the tile the player is trying to enter
-                    self.rect.right = (self.rect.x // game_map.tile_size) * game_map.tile_size + game_map.tile_size - 1
-                else: # Moving left
-                    # Align to the right edge of the tile the player is trying to enter
-                    self.rect.left = (self.rect.x // game_map.tile_size) * game_map.tile_size + game_map.tile_size
+        # Collision handling for X-axis
+        if self.dx != 0:
+            self._handle_collision_x(game_map, old_x)
 
-        # Apply Y movement with collision check
-        # Only attempt to move if there's vertical input
-        if self.direction.y != 0:
-            # Check if moving vertically would result in collision
-            if game_map.can_move_to(self.rect.x, new_y):
-                self.rect.y = new_y
-            else:
-                # If collision, try to align to the edge of the passable tile
-                if self.direction.y > 0: # Moving down
-                    # Align to the top edge of the tile the player is trying to enter
-                    self.rect.bottom = (self.rect.y // game_map.tile_size) * game_map.tile_size + game_map.tile_size - 1
-                else: # Moving up
-                    # Align to the bottom edge of the tile the player is trying to enter
-                    self.rect.top = (self.rect.y // game_map.tile_size) * game_map.tile_size + game_map.tile_size
+        # Collision handling for Y-axis
+        if self.dy != 0:
+            self._handle_collision_y(game_map, old_y)
 
-        # Map Boundary Clamping (after potential movement and tile collision)
-        # Ensure player stays within the absolute map boundaries
+        # Ensure player stays within map bounds
         self.rect.left = max(0, self.rect.left)
         self.rect.right = min(game_map.width, self.rect.right)
         self.rect.top = max(0, self.rect.top)
         self.rect.bottom = min(game_map.height, self.rect.bottom)
+
+
+    def _get_input(self):
+        """Handles player input for movement."""
+        self.dx = 0
+        self.dy = 0
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_w]:
+            self.dy = -1
+        if keys[pygame.K_s]:
+            self.dy = 1
+        if keys[pygame.K_a]:
+            self.dx = -1
+        if keys[pygame.K_d]:
+            self.dx = 1
+
+        # Normalize diagonal movement (optional, but good practice)
+        if self.dx != 0 and self.dy != 0:
+            # Using 0.707 (1/sqrt(2)) for diagonal speed
+            self.dx *= 0.707
+            self.dy *= 0.707
+
+    def _handle_collision_x(self, game_map, old_x):
+        """Handles horizontal collisions with map tiles."""
+        # Get tiles player is currently overlapping or about to overlap horizontally
+        # Check all four corners (or more points for better precision)
+        
+        # Determine affected columns based on player movement
+        start_col = int(self.rect.left // TILE_SIZE)
+        end_col = int(self.rect.right // TILE_SIZE)
+        start_row = int(self.rect.top // TILE_SIZE)
+        end_row = int(self.rect.bottom // TILE_SIZE)
+
+        # Iterate over potentially overlapping tiles
+        for row in range(start_row, end_row + 1):
+            for col in range(start_col, end_col + 1):
+                # Ensure tile coordinates are within map bounds
+                if 0 <= row < game_map.rows and 0 <= col < game_map.cols:
+                    tile = game_map.data[row][col]
+                    if tile.is_collidable:
+                        # Check for collision
+                        if self.rect.colliderect(tile.rect):
+                            # If collided horizontally, revert x position
+                            self.rect.x = old_x
+                            break # Stop checking horizontal tiles if a collision is found in this row
+            else: # This 'else' belongs to the inner 'for' loop
+                continue # Continue to the next row if no collision in current row
+            break # Break from outer loop if a collision was found and X was reverted
+
+
+    def _handle_collision_y(self, game_map, old_y):
+        """Handles vertical collisions with map tiles."""
+        # Similar logic to _handle_collision_x but for y-axis
+        start_col = int(self.rect.left // TILE_SIZE)
+        end_col = int(self.rect.right // TILE_SIZE)
+        start_row = int(self.rect.top // TILE_SIZE)
+        end_row = int(self.rect.bottom // TILE_SIZE)
+
+        for row in range(start_row, end_row + 1):
+            for col in range(start_col, end_col + 1):
+                if 0 <= row < game_map.rows and 0 <= col < game_map.cols:
+                    tile = game_map.data[row][col]
+                    if tile.is_collidable:
+                        if self.rect.colliderect(tile.rect):
+                            self.rect.y = old_y
+                            break # Stop checking vertical tiles if a collision is found in this col
+            else:
+                continue
+            break
